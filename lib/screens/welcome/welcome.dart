@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
+import 'package:tytan/Providers/AuthProvide/authProvide.dart';
 import 'package:tytan/screens/auth/auth_screen.dart';
 import 'package:tytan/screens/background/background.dart';
 import 'package:tytan/screens/constant/Appconstant.dart';
@@ -50,11 +52,34 @@ class _WelcomeScreenState extends State<WelcomeScreen>
     });
   }
 
-  void _selectOption(int index) {
+  void _selectOption(int index) async {
     print('Selected option: $index'); // Debug print
     setState(() {
       _selectedOption = index;
     });
+
+    // Handle login option selection
+    if (index == 0) {
+      // Email login - Navigate to auth screen with Login tab active
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => const AuthScreen(initialTabIndex: 0),
+        ),
+      );
+    } else if (index == 1) {
+      // Google login - Call the googleSignIn method from AuthProvide
+      final authProvider = Provider.of<AuthProvide>(context, listen: false);
+      await authProvider.googleSignIn(context);
+    } else if (index == 2) {
+      // Apple ID login - Not implemented yet
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Apple ID login not implemented yet'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+    }
   }
 
   @override

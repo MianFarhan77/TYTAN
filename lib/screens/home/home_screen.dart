@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:tytan/screens/background/map.dart';
-import 'package:tytan/screens/bottomnavbar/bottomnavbar.dart';
 import 'package:tytan/screens/constant/Appconstant.dart';
-import 'dart:async';
-
+import 'package:tytan/Providers/VpnProvide/vpnProvide.dart';
+import 'package:tytan/screens/premium/premium.dart';
 import 'package:tytan/screens/server/server_screen.dart';
+import 'dart:async';
 
 enum ConnectionState { disconnected, connecting, connected }
 
@@ -18,20 +20,11 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen>
     with SingleTickerProviderStateMixin {
-  ConnectionState _connectionState = ConnectionState.disconnected;
-  int _currentNavIndex = 0;
-  String _currentServer = "Pakistan";
-  String _currentIp = "198.168.192.10";
   Duration _connectedDuration = const Duration();
   Timer? _durationTimer;
 
   // For connecting animation
   late AnimationController _connectingAnimationController;
-  final String _connectingServer = "Türkiye #1";
-
-  // For speed metrics
-  final String _downloadSpeed = "52.2 Mbps";
-  final String _uploadSpeed = "52.2 Mbps";
 
   @override
   void initState() {
@@ -42,60 +35,95 @@ class _HomeScreenState extends State<HomeScreen>
       duration: const Duration(seconds: 2),
       vsync: this,
     )..repeat();
+
+    // Load data only if not already loaded (from splash screen)
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final provider = context.read<VpnProvide>();
+
+      // Only load if servers are empty (means user came directly without splash)
+      if (provider.servers.isEmpty) {
+        // Load user data and premium status first
+        await provider.getUser();
+        await provider.getPremium();
+        provider.lProtocolFromStorage();
+        provider.myKillSwitch();
+
+        // Load servers
+        await provider.getServersPlease(true);
+
+        await provider.loadFavoriteServers();
+        await provider.loadSelectedServerIndex();
+
+        // Auto-select fastest server if no valid server is selected
+        if (provider.servers.isNotEmpty) {
+          if (provider.selectedServerIndex == 0 ||
+              provider.selectedServerIndex >= provider.servers.length) {
+            await provider.selectFastestServerByHealth();
+          }
+        }
+      }
+    });
   }
 
   @override
   void dispose() {
     _connectingAnimationController.dispose();
-    _stopTimer();
+    _durationTimer?.cancel();
+    _durationTimer = null;
     super.dispose();
   }
 
-  void _toggleConnection() {
-    setState(() {
-      switch (_connectionState) {
-        case ConnectionState.disconnected:
-          _connectionState = ConnectionState.connecting;
-          _simulateConnecting();
-          break;
-        case ConnectionState.connecting:
-          // Cancel connecting and go back to disconnected
-          _connectionState = ConnectionState.disconnected;
-          break;
-        case ConnectionState.connected:
-          _connectionState = ConnectionState.disconnected;
-          _stopTimer();
-          break;
-      }
-    });
-  }
+  Future<void> _toggleConnection() async {
+    final provider = context.read<VpnProvide>();
 
-  void _simulateConnecting() {
-    // Simulate 3 second connecting state before becoming connected
-    Future.delayed(const Duration(seconds: 3), () {
-      if (_connectionState == ConnectionState.connecting) {
-        setState(() {
-          _connectionState = ConnectionState.connected;
-          _startTimer();
-        });
+    // Prevent action if already in a transitional state
+    if (provider.isloading) {
+      return;
+    }
+
+    // If currently connected, show disconnecting animation before actual disconnect
+    if (provider.vpnConnectionStatus == VpnStatusConnectionStatus.connected) {
+      // Stop timer immediately
+      _stopTimer();
+
+      // Call toggleVpn (which will set status to disconnecting)
+      final disconnectFuture = provider.toggleVpn();
+
+      // Wait 10 seconds to show the disconnecting animation
+      await Future.delayed(const Duration(seconds: 10));
+
+      // Wait for actual disconnection to complete
+      await disconnectFuture;
+    } else {
+      // Connecting - just proceed normally
+      await provider.toggleVpn();
+
+      // Start timer if connected
+      if (provider.vpnConnectionStatus == VpnStatusConnectionStatus.connected) {
+        _startTimer();
       }
-    });
+    }
   }
 
   void _startTimer() {
     _connectedDuration = Duration.zero;
     _durationTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      setState(() {
-        _connectedDuration = Duration(
-          seconds: _connectedDuration.inSeconds + 1,
-        );
-      });
+      if (mounted) {
+        setState(() {
+          _connectedDuration = Duration(
+            seconds: _connectedDuration.inSeconds + 1,
+          );
+        });
+      }
     });
   }
 
   void _stopTimer() {
     _durationTimer?.cancel();
     _durationTimer = null;
+    setState(() {
+      _connectedDuration = Duration.zero;
+    });
   }
 
   String _formatDuration(Duration duration) {
@@ -104,6 +132,21 @@ class _HomeScreenState extends State<HomeScreen>
     String minutes = twoDigits(duration.inMinutes.remainder(60));
     String seconds = twoDigits(duration.inSeconds.remainder(60));
     return "$hours:$minutes:$seconds";
+  }
+
+  ConnectionState _getConnectionState(VpnProvide provider) {
+    switch (provider.vpnConnectionStatus) {
+      case VpnStatusConnectionStatus.connected:
+        return ConnectionState.connected;
+      case VpnStatusConnectionStatus.connecting:
+      case VpnStatusConnectionStatus.reconnecting:
+        return ConnectionState.connecting;
+      case VpnStatusConnectionStatus.disconnecting:
+        return ConnectionState
+            .connecting; // Use connecting view for disconnecting animation
+      case VpnStatusConnectionStatus.disconnected:
+        return ConnectionState.disconnected;
+    }
   }
 
   @override
@@ -118,14 +161,16 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Widget _buildContent() {
+    final provider = context.watch<VpnProvide>();
+    final connectionState = _getConnectionState(provider);
+
     // Show different content based on connection state
-    switch (_connectionState) {
+    switch (connectionState) {
       case ConnectionState.connecting:
         return _buildConnectingView();
       case ConnectionState.connected:
         return _buildConnectedView();
       case ConnectionState.disconnected:
-      default:
         return _buildDisconnectedView();
     }
   }
@@ -172,18 +217,25 @@ class _HomeScreenState extends State<HomeScreen>
               ),
             ],
           ),
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: Colors.transparent,
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: AppColors.textGray, width: 1),
-            ),
-            child: const Icon(
-              Icons.notifications_none_rounded,
-              color: Colors.white,
-              size: 20,
+          GestureDetector(
+            onTap: () {
+              // Handle info icon tap
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const PremiumScreen()),
+              );
+            },
+            child: Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: Colors.transparent,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: AppColors.textGray, width: 1),
+              ),
+              child: Center(
+                child: Image.asset('assets/i.png', width: 20, height: 20),
+              ),
             ),
           ),
         ],
@@ -192,6 +244,13 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Widget _buildDisconnectedView() {
+    final provider = context.watch<VpnProvide>();
+    final selectedServer =
+        provider.servers.isNotEmpty &&
+            provider.selectedServerIndex < provider.servers.length
+        ? provider.servers[provider.selectedServerIndex]
+        : null;
+
     return Column(
       children: [
         _buildAppHeader(),
@@ -246,77 +305,108 @@ class _HomeScreenState extends State<HomeScreen>
 
         const Spacer(flex: 1),
 
-        // Premium Box
-        Container(
-          margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: const Color(0xFF1E1E1E),
-            borderRadius: BorderRadius.circular(15),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        // Show Selected Server for all users - No Premium Widget
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+          child: GestureDetector(
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const ServersScreen()),
+              );
+            },
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1E1E1E),
+                borderRadius: BorderRadius.circular(15),
+              ),
+              child: Row(
                 children: [
-                  Text(
-                    'Premium Shield',
-                    style: GoogleFonts.plusJakartaSans(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: AppColors.primary,
-                      borderRadius: BorderRadius.circular(15),
-                    ),
-                    child: Text(
-                      'PRO',
-                      style: GoogleFonts.plusJakartaSans(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
+                  // Server Flag
+                  if (selectedServer != null)
+                    ClipOval(
+                      child: CachedNetworkImage(
+                        imageUrl: selectedServer.image,
+                        width: 48,
+                        height: 48,
+                        fit: BoxFit.cover,
+                        placeholder: (context, url) => Container(
+                          width: 48,
+                          height: 48,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.grey.withOpacity(0.2),
+                          ),
+                          child: const CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              AppColors.primary,
+                            ),
+                          ),
+                        ),
+                        errorWidget: (context, url, error) => Container(
+                          width: 48,
+                          height: 48,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.grey.withOpacity(0.2),
+                          ),
+                          child: const Icon(
+                            Icons.flag,
+                            color: Colors.white,
+                            size: 24,
+                          ),
+                        ),
+                      ),
+                    )
+                  else
+                    Container(
+                      width: 48,
+                      height: 48,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.grey.withOpacity(0.2),
+                      ),
+                      child: const CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          AppColors.primary,
+                        ),
                       ),
                     ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Selected Server',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w400,
+                            color: AppColors.textGray,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          selectedServer?.name ?? 'Loading...',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Icon(
+                    Icons.keyboard_arrow_right,
+                    color: AppColors.textGray,
                   ),
                 ],
               ),
-              const SizedBox(height: 5),
-              Text(
-                'Experience ultra-fast encrypted protection.',
-                style: GoogleFonts.plusJakartaSans(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w400,
-                  color: AppColors.textGray,
-                ),
-              ),
-              const SizedBox(height: 15),
-              Container(
-                width: double.infinity,
-                height: 50,
-                decoration: BoxDecoration(
-                  color: AppColors.primary,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Center(
-                  child: Text(
-                    'Upgrade Now',
-                    style: GoogleFonts.plusJakartaSans(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
-                  ),
-                ),
-              ),
-            ],
+            ),
           ),
         ),
       ],
@@ -324,6 +414,13 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Widget _buildConnectingView() {
+    final provider = context.watch<VpnProvide>();
+    final selectedServer =
+        provider.servers.isNotEmpty &&
+            provider.selectedServerIndex < provider.servers.length
+        ? provider.servers[provider.selectedServerIndex]
+        : null;
+
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
@@ -383,19 +480,21 @@ class _HomeScreenState extends State<HomeScreen>
                   ),
 
                   // Inner orange circle
-                  Container(
-                    width: 120,
-                    height: 120,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: const Color(0xFF1E1E1E),
-                      border: Border.all(color: AppColors.primary, width: 2),
-                    ),
-                    child: Center(
-                      child: Image.asset(
-                        'assets/Tytan Logo.png',
-                        width: 60,
-                        height: 60,
+                  Center(
+                    child: Container(
+                      width: 120,
+                      height: 120,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: const Color(0xFF1E1E1E),
+                        border: Border.all(color: AppColors.primary, width: 2),
+                      ),
+                      child: Center(
+                        child: Image.asset(
+                          'assets/Tytan Logo.png',
+                          width: 60,
+                          height: 60,
+                        ),
                       ),
                     ),
                   ),
@@ -408,12 +507,17 @@ class _HomeScreenState extends State<HomeScreen>
         const SizedBox(height: 30),
 
         // Connecting Text
-        Text(
-          'Connecting....',
-          style: GoogleFonts.plusJakartaSans(
-            fontSize: 22,
-            fontWeight: FontWeight.w600,
-            color: AppColors.primary,
+        Center(
+          child: Text(
+            provider.vpnConnectionStatus ==
+                    VpnStatusConnectionStatus.disconnecting
+                ? 'Disconnecting....'
+                : 'Connecting....',
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 22,
+              fontWeight: FontWeight.w600,
+              color: AppColors.primary,
+            ),
           ),
         ),
 
@@ -421,7 +525,7 @@ class _HomeScreenState extends State<HomeScreen>
 
         // Server Name
         Text(
-          _connectingServer,
+          selectedServer?.name ?? 'Selecting server...',
           style: GoogleFonts.plusJakartaSans(
             fontSize: 28,
             fontWeight: FontWeight.bold,
@@ -433,6 +537,13 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Widget _buildConnectedView() {
+    final provider = context.watch<VpnProvide>();
+    final selectedServer =
+        provider.servers.isNotEmpty &&
+            provider.selectedServerIndex < provider.servers.length
+        ? provider.servers[provider.selectedServerIndex]
+        : null;
+
     return Column(
       children: [
         _buildAppHeader(),
@@ -528,7 +639,7 @@ class _HomeScreenState extends State<HomeScreen>
                   ),
                   const SizedBox(height: 5),
                   Text(
-                    _downloadSpeed,
+                    '${provider.downloadSpeed} Kb/s',
                     style: GoogleFonts.plusJakartaSans(
                       fontSize: 14,
                       fontWeight: FontWeight.bold,
@@ -568,7 +679,7 @@ class _HomeScreenState extends State<HomeScreen>
                   ),
                   const SizedBox(height: 5),
                   Text(
-                    _uploadSpeed,
+                    '${provider.uploadSpeed} Kb/s',
                     style: GoogleFonts.plusJakartaSans(
                       fontSize: 14,
                       fontWeight: FontWeight.bold,
@@ -588,7 +699,11 @@ class _HomeScreenState extends State<HomeScreen>
           padding: const EdgeInsets.symmetric(horizontal: 20),
           child: GestureDetector(
             onTap: () {
-              // Open server selection screen
+              // Navigate to server selection screen
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const ServersScreen()),
+              );
             },
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -601,28 +716,65 @@ class _HomeScreenState extends State<HomeScreen>
                 children: [
                   Row(
                     children: [
-                      // Country Flag - Using a placeholder
-                      Container(
-                        width: 36,
-                        height: 36,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Colors.green.withOpacity(0.1),
-                          border: Border.all(
-                            color: Colors.green.withOpacity(0.5),
-                            width: 2,
+                      // Country Flag
+                      if (selectedServer != null)
+                        ClipOval(
+                          child: CachedNetworkImage(
+                            imageUrl: selectedServer.image,
+                            width: 36,
+                            height: 36,
+                            fit: BoxFit.cover,
+                            placeholder: (context, url) => Container(
+                              width: 36,
+                              height: 36,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: Colors.green.withOpacity(0.1),
+                              ),
+                            ),
+                            errorWidget: (context, url, error) => Container(
+                              width: 36,
+                              height: 36,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: Colors.green.withOpacity(0.1),
+                                border: Border.all(
+                                  color: Colors.green.withOpacity(0.5),
+                                  width: 2,
+                                ),
+                              ),
+                              child: const Icon(
+                                Icons.flag,
+                                color: Colors.white,
+                                size: 20,
+                              ),
+                            ),
+                          ),
+                        )
+                      else
+                        Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.green.withOpacity(0.1),
+                            border: Border.all(
+                              color: Colors.green.withOpacity(0.5),
+                              width: 2,
+                            ),
+                          ),
+                          child: const Icon(
+                            Icons.flag,
+                            color: Colors.white,
+                            size: 20,
                           ),
                         ),
-                        child: Center(
-                          child: Text('🇵🇰', style: TextStyle(fontSize: 16)),
-                        ),
-                      ),
                       const SizedBox(width: 12),
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            _currentServer,
+                            selectedServer?.name ?? 'No Server',
                             style: GoogleFonts.plusJakartaSans(
                               fontSize: 16,
                               fontWeight: FontWeight.w600,
@@ -630,7 +782,7 @@ class _HomeScreenState extends State<HomeScreen>
                             ),
                           ),
                           Text(
-                            _currentIp,
+                            selectedServer?.type ?? 'N/A',
                             style: GoogleFonts.plusJakartaSans(
                               fontSize: 12,
                               fontWeight: FontWeight.w400,
@@ -643,11 +795,21 @@ class _HomeScreenState extends State<HomeScreen>
                   ),
                   Row(
                     children: [
-                      // Signal Strength
+                      // Signal Strength (based on health_score if available)
                       Column(
                         children: [
                           Row(
+                            crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
+                              Container(
+                                width: 3,
+                                height: 7,
+                                decoration: BoxDecoration(
+                                  color: Colors.green,
+                                  borderRadius: BorderRadius.circular(2),
+                                ),
+                              ),
+                              const SizedBox(width: 2),
                               Container(
                                 width: 3,
                                 height: 10,
@@ -669,15 +831,6 @@ class _HomeScreenState extends State<HomeScreen>
                               Container(
                                 width: 3,
                                 height: 16,
-                                decoration: BoxDecoration(
-                                  color: Colors.green,
-                                  borderRadius: BorderRadius.circular(2),
-                                ),
-                              ),
-                              const SizedBox(width: 2),
-                              Container(
-                                width: 3,
-                                height: 19,
                                 decoration: BoxDecoration(
                                   color: Colors.green,
                                   borderRadius: BorderRadius.circular(2),

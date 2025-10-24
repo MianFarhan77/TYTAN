@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:provider/provider.dart';
 import 'package:tytan/screens/background/background.dart';
 import 'package:tytan/screens/constant/Appconstant.dart';
 import 'package:tytan/screens/welcome/welcome.dart';
+import 'package:tytan/screens/bottomnavbar/bottomnavbar.dart';
+import 'package:tytan/Providers/VpnProvide/vpnProvide.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({Key? key}) : super(key: key);
@@ -56,13 +60,49 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   // In your splash screen _navigateToNextScreen method, change it to:
-  void _navigateToNextScreen() {
-    Future.delayed(const Duration(milliseconds: 500), () {
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (context) => const WelcomeScreen()),
-      );
-    });
+  Future<void> _navigateToNextScreen() async {
+    // Check if user is already logged in
+    final prefs = await SharedPreferences.getInstance();
+    final String? token = prefs.getString('token');
+    final bool isLoggedIn = token != null && token.isNotEmpty;
+
+    // If user is logged in, preload servers and user data
+    if (isLoggedIn && mounted) {
+      final provider = context.read<VpnProvide>();
+
+      // Preload all necessary data in parallel
+      await Future.wait([
+        provider.getServersPlease(true),
+        provider.getUser(),
+        provider.getPremium(),
+        provider.loadFavoriteServers(),
+        provider.loadSelectedServerIndex(),
+      ]);
+
+      // Load protocol and kill switch settings (synchronous)
+      provider.lProtocolFromStorage();
+      provider.myKillSwitch();
+
+      // Auto-select fastest server if no valid server is selected
+      if (provider.servers.isNotEmpty &&
+          (provider.selectedServerIndex == 0 ||
+              provider.selectedServerIndex >= provider.servers.length)) {
+        await provider.selectFastestServerByHealth();
+      }
+    }
+
+    await Future.delayed(const Duration(milliseconds: 500));
+
+    if (!mounted) return;
+
+    // Navigate to Home if logged in, otherwise to Welcome screen
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (context) =>
+            isLoggedIn ? const BottomNavBar() : const WelcomeScreen(),
+      ),
+    );
   }
 
   @override

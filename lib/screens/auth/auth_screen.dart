@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
+import 'package:tytan/Providers/AuthProvide/authProvide.dart';
 import 'package:tytan/screens/auth/forget.dart';
 import 'package:tytan/screens/background/background.dart';
 import 'package:tytan/screens/bottomnavbar/bottomnavbar.dart';
@@ -91,6 +93,10 @@ class _AuthScreenState extends State<AuthScreen> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
+    var provider = Provider.of<AuthProvide>(context);
+    // Update loading state based on provider
+    _isLoading = provider.isloading;
+
     return Scaffold(
       resizeToAvoidBottomInset: true,
       body: AppBackground(
@@ -580,20 +586,15 @@ class _AuthScreenState extends State<AuthScreen> with TickerProviderStateMixin {
         _isLoading = true;
       });
 
-      // Simulate API call
-      await Future.delayed(const Duration(seconds: 2));
+      final authProvider = Provider.of<AuthProvide>(context, listen: false);
+      authProvider.mailController.text = _emailController.text;
+      authProvider.passwordController.text = _passwordController.text;
+
+      await authProvider.login(context);
 
       setState(() {
         _isLoading = false;
       });
-
-      // Navigate to the HomeScreen after successful login
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (context) => const BottomNavBar()),
-      );
-
-      print('Login successful');
     }
   }
 
@@ -632,13 +633,19 @@ class _AuthScreenState extends State<AuthScreen> with TickerProviderStateMixin {
         _isLoading = true;
       });
 
-      await Future.delayed(const Duration(seconds: 2));
+      final authProvider = Provider.of<AuthProvide>(context, listen: false);
+      authProvider.mailController.text = _emailController.text;
+      authProvider.passwordController.text = _passwordController.text;
+      // For signup, we need to set username from the email since there's no username field in the UI
+      authProvider.usernameController.text = _emailController.text.split(
+        '@',
+      )[0];
+
+      await authProvider.signup(context);
 
       setState(() {
         _isLoading = false;
       });
-
-      print('Sign up successful');
     }
   }
 }

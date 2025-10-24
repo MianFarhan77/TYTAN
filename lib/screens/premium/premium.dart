@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
+import 'package:tytan/Providers/VpnProvide/vpnProvide.dart';
 import 'package:tytan/screens/background/background.dart';
 import 'package:tytan/screens/constant/Appconstant.dart';
 
@@ -28,6 +30,12 @@ class _PremiumScreenState extends State<PremiumScreen>
       parent: _animationController,
       curve: Curves.easeInOut,
     );
+
+    // Load plans from VPN provider
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final provider = Provider.of<VpnProvide>(context, listen: false);
+      provider.getPlans();
+    });
   }
 
   @override
@@ -287,49 +295,92 @@ class _PremiumScreenState extends State<PremiumScreen>
 
   // SECOND SCREEN - PLAN SELECTION VIEW
   Widget _buildPlanSelectionView() {
-    return SingleChildScrollView(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        child: Column(
-          children: [
-            const SizedBox(height: 20),
-            _buildPlanOption(
-              planId: 'monthly',
-              title: 'Monthly',
-              subtitle: 'Perfect for trying premium',
-              price: '\$12.99',
-              billingInfo: 'Billed monthly • Cancel anytime',
-              icon: Icons.calendar_month,
-              isPopular: false,
+    return Consumer<VpnProvide>(
+      builder: (context, provider, child) {
+        // Show loading indicator while plans are being fetched
+        if (provider.plans.isEmpty) {
+          return Center(
+            child: CircularProgressIndicator(color: AppColors.primary),
+          );
+        }
+
+        return SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Column(
+              children: [
+                const SizedBox(height: 20),
+                // Display plans from VPN provider
+                ...provider.plans.map((plan) {
+                  // Calculate monthly price
+                  final monthlyPrice = plan.discountPrice > 0
+                      ? plan.discountPrice
+                      : plan.originalPrice;
+
+                  // Calculate savings percentage
+                  final savingsPercent = plan.originalPrice > 0
+                      ? ((plan.originalPrice - plan.discountPrice) /
+                                plan.originalPrice *
+                                100)
+                            .round()
+                      : 0;
+
+                  // Determine icon based on interval
+                  IconData planIcon;
+                  if (plan.invoiceInterval.toLowerCase().contains('month') &&
+                      plan.invoicePeriod == 1) {
+                    planIcon = Icons.calendar_month;
+                  } else if (plan.invoiceInterval.toLowerCase().contains(
+                    'year',
+                  )) {
+                    planIcon = Icons.star;
+                  } else {
+                    planIcon = Icons.access_time;
+                  }
+
+                  // Build subtitle with savings info
+                  String subtitle = plan.description;
+                  if (savingsPercent > 0 && plan.isBestDeal) {
+                    subtitle = 'Best value • Save $savingsPercent%';
+                  } else if (savingsPercent > 0) {
+                    subtitle = 'Save $savingsPercent%';
+                  }
+
+                  // Build billing info
+                  String billingInfo =
+                      'Billed \$${plan.originalPrice.toStringAsFixed(2)} ${plan.invoiceInterval}';
+                  if (plan.invoicePeriod > 1) {
+                    billingInfo =
+                        'Billed \$${plan.originalPrice.toStringAsFixed(2)} every ${plan.invoicePeriod} ${plan.invoiceInterval}s';
+                  }
+                  if (plan.trialPeriod > 0) {
+                    billingInfo +=
+                        ' • ${plan.trialPeriod} ${plan.trialInterval} free trial';
+                  }
+
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 15),
+                    child: _buildPlanOption(
+                      planId: plan.slug,
+                      title: plan.name,
+                      subtitle: subtitle,
+                      price: '\$${monthlyPrice.toStringAsFixed(2)}',
+                      billingInfo: billingInfo,
+                      icon: planIcon,
+                      isPopular: plan.isBestDeal,
+                    ),
+                  );
+                }).toList(),
+                const SizedBox(height: 40),
+                _buildStartTrialButton(),
+                const SizedBox(height: 20),
+                _buildTrialInfo(),
+                const SizedBox(height: 20),
+              ],
             ),
-            const SizedBox(height: 15),
-            _buildPlanOption(
-              planId: 'yearly',
-              title: 'Yearly',
-              subtitle: 'Best value • Save 60%',
-              price: '\$4.99',
-              billingInfo: 'Billed \$59.88 yearly • 2 months free',
-              icon: Icons.star,
-              isPopular: true,
-            ),
-            const SizedBox(height: 15),
-            _buildPlanOption(
-              planId: '6month',
-              title: '6-Month',
-              subtitle: 'Great balance • Save 35%',
-              price: '\$8.49',
-              billingInfo: 'Billed \$50.94 every 6 months',
-              icon: Icons.access_time,
-              isPopular: false,
-            ),
-            const SizedBox(height: 40),
-            _buildStartTrialButton(),
-            const SizedBox(height: 20),
-            _buildTrialInfo(),
-            const SizedBox(height: 20),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 

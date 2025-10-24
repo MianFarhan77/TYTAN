@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
+import 'package:tytan/Providers/VpnProvide/vpnProvide.dart';
 import 'package:tytan/screens/background/background.dart';
 import 'package:tytan/screens/constant/Appconstant.dart';
 
@@ -11,10 +13,18 @@ class ProtocolScreen extends StatefulWidget {
 }
 
 class _ProtocolScreenState extends State<ProtocolScreen> {
-  String _selectedProtocol = 'Vless'; // Default selection
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Load protocol from provider when screen loads
+    final provider = Provider.of<VpnProvide>(context, listen: false);
+    provider.lProtocolFromStorage();
+  }
 
   @override
   Widget build(BuildContext context) {
+    final provider = Provider.of<VpnProvide>(context);
+
     return Scaffold(
       body: AppBackground(
         child: SafeArea(
@@ -28,7 +38,9 @@ class _ProtocolScreenState extends State<ProtocolScreen> {
                   child: Column(
                     children: [
                       _buildProtocolOption(
-                        name: 'Vless',
+                        provider: provider,
+                        protocol: Protocol.openvpn,
+                        name: 'OpenVPN',
                         description:
                             'Experience next-gen speed with lightweight encryption and instant connectivity.',
                         feature: 'Ultra Fast',
@@ -37,12 +49,25 @@ class _ProtocolScreenState extends State<ProtocolScreen> {
                       ),
                       const SizedBox(height: 16),
                       _buildProtocolOption(
-                        name: 'Vmess',
+                        provider: provider,
+                        protocol: Protocol.wireguard,
+                        name: 'WireGuard',
                         description:
                             'Enjoy military-grade security with time-tested, stable, and reliable protection.',
                         feature: 'Stable Connection',
                         featureColor: Colors.blue,
                         iconColor: const Color(0xFF0A84FF),
+                      ),
+                      const SizedBox(height: 16),
+                      _buildProtocolOption(
+                        provider: provider,
+                        protocol: Protocol.singbox,
+                        name: 'SingBox',
+                        description:
+                            'Next-generation VPN protocol with advanced features and high performance.',
+                        feature: 'Advanced',
+                        featureColor: Colors.purple,
+                        iconColor: const Color(0xFF8B5CF6),
                       ),
                     ],
                   ),
@@ -93,19 +118,46 @@ class _ProtocolScreenState extends State<ProtocolScreen> {
   }
 
   Widget _buildProtocolOption({
+    required VpnProvide provider,
+    required Protocol protocol,
     required String name,
     required String description,
     required String feature,
     required Color featureColor,
     required Color iconColor,
   }) {
-    final bool isSelected = _selectedProtocol == name;
+    final bool isSelected = provider.selectedProtocol == protocol;
 
     return GestureDetector(
-      onTap: () {
-        setState(() {
-          _selectedProtocol = name;
-        });
+      onTap: () async {
+        // Try to set the protocol
+        final success = await provider.setProtocol(protocol);
+
+        if (!success && mounted) {
+          // Show error message if protocol change failed
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Please disconnect VPN before changing protocol',
+                style: GoogleFonts.plusJakartaSans(color: Colors.white),
+              ),
+              backgroundColor: Colors.red,
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        } else if (success && mounted) {
+          // Show success message
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Protocol changed to $name',
+                style: GoogleFonts.plusJakartaSans(color: Colors.white),
+              ),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
       },
       child: Container(
         padding: const EdgeInsets.all(16),

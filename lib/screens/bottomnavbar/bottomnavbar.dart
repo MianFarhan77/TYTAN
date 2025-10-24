@@ -2,10 +2,12 @@
 import 'package:get/get.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
 import 'package:tytan/screens/constant/Appconstant.dart';
 import 'package:tytan/screens/home/home_screen.dart';
 import 'package:tytan/screens/server/server_screen.dart';
 import 'package:tytan/screens/setting/setting_screen.dart';
+import 'package:tytan/Providers/VpnProvide/vpnProvide.dart';
 
 class BottomNavBar extends StatefulWidget {
   const BottomNavBar({super.key});
@@ -15,15 +17,47 @@ class BottomNavBar extends StatefulWidget {
 }
 
 class _BottomNavBarState extends State<BottomNavBar> {
-  // Current tab index
+  // Current tab index (starts at 0 for Home screen)
   var currentIndex = 0.obs;
 
-  // Pages to navigate between
-  final List<Widget> pages = [
-    const HomeScreen(),
-    const ServersScreen(),
-    const SettingsScreen(),
-  ];
+  @override
+  void initState() {
+    super.initState();
+    // Auto-connect when app starts (only if not already connected)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _autoConnect();
+    });
+  }
+
+  Future<void> _autoConnect() async {
+    final provider = Provider.of<VpnProvide>(context, listen: false);
+    // Only auto-connect if VPN is disconnected
+    if (provider.vpnConnectionStatus ==
+        VpnStatusConnectionStatus.disconnected) {
+      await provider.autoC(context);
+    }
+  }
+
+  // Method to get current page with callback
+  Widget _getCurrentPage() {
+    switch (currentIndex.value) {
+      case 0:
+        return const HomeScreen();
+      case 1:
+        return ServersScreen(
+          onServerSelected: () {
+            // When user selects a server, switch to Home screen
+            setState(() {
+              currentIndex.value = 0;
+            });
+          },
+        );
+      case 2:
+        return const SettingsScreen();
+      default:
+        return const HomeScreen();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -34,7 +68,7 @@ class _BottomNavBarState extends State<BottomNavBar> {
       right: false,
       child: Obx(
         () => Scaffold(
-          body: pages[currentIndex.value],
+          body: _getCurrentPage(),
           bottomNavigationBar: Container(
             height: 70,
             decoration: const BoxDecoration(

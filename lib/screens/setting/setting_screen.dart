@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
+import 'package:tytan/Providers/VpnProvide/vpnProvide.dart';
 import 'package:tytan/screens/background/background.dart';
-import 'package:tytan/screens/bottomnavbar/bottomnavbar.dart';
 import 'package:tytan/screens/constant/Appconstant.dart';
 import 'package:tytan/screens/premium/premium.dart';
 import 'package:tytan/screens/setting/Account.dart';
@@ -17,16 +18,24 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  int _currentNavIndex = 2; // 2 for Settings tab
-
-  // Toggle states
-  bool _autoConnectEnabled = true;
-  bool _killSwitchEnabled = true;
+  // Toggle states (only for features not in VPN provider)
   bool _dnsLeakProtectionEnabled = true;
   bool _splitTunnelingEnabled = false;
 
   @override
+  void initState() {
+    super.initState();
+    // Load auto-connect and kill-switch states from provider
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final provider = Provider.of<VpnProvide>(context, listen: false);
+      provider.myKillSwitch(); // Load kill-switch state from storage
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final provider = Provider.of<VpnProvide>(context);
+
     return Scaffold(
       body: AppBackground(
         child: SafeArea(
@@ -51,11 +60,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             subtitle: 'Connect to fastest server',
                             icon: Icons.bolt,
                             iconColor: AppColors.primary,
-                            value: _autoConnectEnabled,
+                            value: provider.autoConnectOn,
                             onChanged: (value) {
-                              setState(() {
-                                _autoConnectEnabled = value;
-                              });
+                              provider.toggleAutoConnectState();
                             },
                           ),
                           _buildNavigationSetting(
@@ -98,11 +105,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             subtitle: 'Block internet if VPN drops',
                             icon: Icons.power_settings_new,
                             iconColor: AppColors.primary,
-                            value: _killSwitchEnabled,
+                            value: provider.killSwitchOn,
                             onChanged: (value) {
-                              setState(() {
-                                _killSwitchEnabled = value;
-                              });
+                              provider.toggleKillSwitchState();
                             },
                           ),
                           _buildToggleSetting(
@@ -142,7 +147,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         iconBackgroundColor: AppColors.primary,
                         children: [
                           _buildProfileSetting(
-                            email: 'alex.smith@email.com',
+                            email: provider.user.isNotEmpty
+                                ? provider.user.first.email
+                                : 'Loading...',
                             onTap: () {
                               Navigator.push(
                                 context,
@@ -185,8 +192,48 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             subtitle: 'Logout from this device',
                             icon: Icons.logout,
                             iconColor: Colors.red.shade300,
-                            onTap: () {
-                              // Handle sign out
+                            onTap: () async {
+                              // Show success message
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Row(
+                                    children: [
+                                      const Icon(
+                                        Icons.check_circle,
+                                        color: Colors.white,
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Text(
+                                        'Your account is signed out',
+                                        style: GoogleFonts.plusJakartaSans(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  backgroundColor: Colors.green,
+                                  behavior: SnackBarBehavior.floating,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  margin: const EdgeInsets.all(16),
+                                  duration: const Duration(seconds: 2),
+                                ),
+                              );
+
+                              // Wait a moment for the snackbar to show
+                              await Future.delayed(
+                                const Duration(milliseconds: 500),
+                              );
+
+                              if (context.mounted) {
+                                var provider = Provider.of<VpnProvide>(
+                                  context,
+                                  listen: false,
+                                );
+                                provider.logout(context);
+                              }
                             },
                             isLastItem: true,
                           ),

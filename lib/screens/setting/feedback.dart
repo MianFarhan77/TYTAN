@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
+import 'package:tytan/Providers/VpnProvide/vpnProvide.dart';
 import 'package:tytan/screens/background/background.dart';
 import 'package:tytan/screens/constant/Appconstant.dart';
 
@@ -14,6 +16,7 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
   int _rating = 0;
   String _selectedFeedbackType = '';
   final TextEditingController _feedbackController = TextEditingController();
+  bool _isSubmitting = false;
 
   final List<String> _feedbackTypes = [
     'App Design',
@@ -22,6 +25,18 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
     'Bugs',
     'Other',
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    // Load user email from provider if available
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final provider = Provider.of<VpnProvide>(context, listen: false);
+      if (provider.user.isNotEmpty) {
+        provider.emailController.text = provider.user.first.email;
+      }
+    });
+  }
 
   @override
   void dispose() {
@@ -260,24 +275,130 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
       width: double.infinity,
       height: 50,
       child: ElevatedButton(
-        onPressed: () {
-          // Send feedback
-        },
+        onPressed: _isSubmitting ? null : _submitFeedback,
         style: ElevatedButton.styleFrom(
           backgroundColor: AppColors.primary,
           foregroundColor: Colors.white,
+          disabledBackgroundColor: Colors.grey,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
           ),
         ),
-        child: Text(
-          'Send Feedback',
-          style: GoogleFonts.plusJakartaSans(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
+        child: _isSubmitting
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  color: Colors.white,
+                  strokeWidth: 2,
+                ),
+              )
+            : Text(
+                'Send Feedback',
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
       ),
     );
+  }
+
+  Future<void> _submitFeedback() async {
+    // Validate inputs
+    if (_rating == 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Please select a rating',
+            style: GoogleFonts.plusJakartaSans(),
+          ),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    if (_selectedFeedbackType.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Please select a feedback type',
+            style: GoogleFonts.plusJakartaSans(),
+          ),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    if (_feedbackController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Please enter your feedback',
+            style: GoogleFonts.plusJakartaSans(),
+          ),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _isSubmitting = true;
+    });
+
+    try {
+      final provider = Provider.of<VpnProvide>(context, listen: false);
+
+      // Prepare feedback data using provider's text controllers
+      // Include subject, category and rating in the message body
+      final feedbackMessage =
+          '''Subject: App Feedback - $_selectedFeedbackType
+Category: $_selectedFeedbackType
+Rating: $_rating/5 stars
+
+${_feedbackController.text.trim()}''';
+
+      provider.messageController.text = feedbackMessage;
+
+      // If email is not set, use user's email from provider
+      if (provider.user.isNotEmpty) {
+        provider.emailController.text = provider.user.first.email;
+      }
+
+      // Submit feedback using provider's method
+      await provider.addFeedback(context);
+
+      // Clear form after successful submission
+      setState(() {
+        _rating = 0;
+        _selectedFeedbackType = '';
+        _feedbackController.clear();
+      });
+
+      // Navigate back after short delay
+      await Future.delayed(const Duration(seconds: 1));
+      if (mounted) {
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Failed to submit feedback. Please try again.',
+            style: GoogleFonts.plusJakartaSans(),
+          ),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSubmitting = false;
+        });
+      }
+    }
   }
 }

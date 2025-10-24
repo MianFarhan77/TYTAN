@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
+import 'package:tytan/Providers/AuthProvide/authProvide.dart';
 import 'package:tytan/screens/background/background.dart';
 import 'package:tytan/screens/constant/Appconstant.dart';
 
@@ -42,8 +44,24 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen>
     // Pre-fill email for demo
     _emailController.text = 'tecclubx@gmail.com';
 
+    // Initialize provider with email value
+    Future.microtask(() {
+      final authProvider = Provider.of<AuthProvide>(context, listen: false);
+      authProvider.mailController.text = _emailController.text;
+    });
+
     // Add listener to focus node for UI updates
     _emailFocusNode.addListener(() => setState(() {}));
+
+    // Add listener to sync email field with provider
+    _emailController.addListener(() {
+      Future.microtask(() {
+        if (mounted) {
+          final authProvider = Provider.of<AuthProvide>(context, listen: false);
+          authProvider.mailController.text = _emailController.text;
+        }
+      });
+    });
   }
 
   @override
@@ -51,11 +69,28 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen>
     _animationController.dispose();
     _emailController.dispose();
     _emailFocusNode.dispose();
+
+    // Clear the provider's email when we leave this screen
+    Future.microtask(() {
+      if (mounted) {
+        try {
+          final authProvider = Provider.of<AuthProvide>(context, listen: false);
+          authProvider.mailController.text = '';
+        } catch (e) {
+          // Handle case where provider is not available
+        }
+      }
+    });
+
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    // Get loading state from AuthProvide
+    final authProvider = Provider.of<AuthProvide>(context);
+    _isLoading = authProvider.isloading;
+
     return Scaffold(
       resizeToAvoidBottomInset: true,
       body: AppBackground(
@@ -293,23 +328,17 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen>
         _isLoading = true;
       });
 
-      // Simulate API call
-      await Future.delayed(const Duration(seconds: 2));
+      // Get AuthProvide instance
+      final authProvider = Provider.of<AuthProvide>(context, listen: false);
+      // Set email in provider's controller
+      authProvider.mailController.text = _emailController.text;
+
+      // Call forgot password API
+      await authProvider.forgotPassword(context);
 
       setState(() {
         _isLoading = false;
       });
-
-      // Show success message
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Password reset link sent to ${_emailController.text}',
-            style: GoogleFonts.plusJakartaSans(),
-          ),
-          backgroundColor: Colors.green,
-        ),
-      );
 
       // Optional: Go back to login screen after a delay
       Future.delayed(const Duration(seconds: 2), () {
